@@ -1,0 +1,235 @@
+#include "config.h"
+
+
+/*Sensors*/
+//DHT22
+DHT_Unified dht(DHT_PIN, DHT22);
+//CCS811
+Adafruit_CCS811 ccs;
+
+
+/*WiFi Client*/
+WiFiClient client;
+
+
+/*MQTT*/
+Adafruit_MQTT_Client mqtt(&client, SERVER, SERVERPORT, "", "");
+void MQTT_connect();
+Adafruit_MQTT_Publish MQTT_temperature = Adafruit_MQTT_Publish(&mqtt, "/IoT_workshop/temperature");
+Adafruit_MQTT_Publish MQTT_humidity = Adafruit_MQTT_Publish(&mqtt, "/IoT_workshop/humidity");
+Adafruit_MQTT_Publish MQTT_CO2 = Adafruit_MQTT_Publish(&mqtt, "/IoT_workshop/CO2");
+Adafruit_MQTT_Publish MQTT_TVOC = Adafruit_MQTT_Publish(&mqtt, "/IoT_workshop/TVOC");
+
+
+/*measurements*/
+float temperature, humidity, CO2, TVOC, CCTEMP;
+/**/
+
+
+void setup(){
+
+  //
+  pinMode(p_red, OUTPUT);
+  pinMode(p_green, OUTPUT);
+  pinMode(p_blue, OUTPUT);
+
+  pinMode(FAN_PIN, OUTPUT);
+
+  set_light(off);
+  fan_off();
+
+  Serial.begin(115200);
+  while(! Serial);
+
+  //start DHT22
+  dht.begin();
+
+
+  //Start CCS gas sensor
+  if(!ccs.begin()){
+    Serial.println("Failed to start sensor! Please check your wiring.");
+    while(1);
+  }
+
+  //calibrate temperature sensor
+  while(!ccs.available());
+  float temp = ccs.calculateTemperature();
+  ccs.setTempOffset(temp - 25.0);
+
+  /* Connect WiFi */
+  set_light(orange);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  Serial.println("WiFi connected");
+  Serial.println("IP address: "); Serial.println(WiFi.localIP());
+  set_light(off);
+
+}
+
+void loop(){
+
+
+  //check wifi.
+
+  if(WiFi.status() != WL_CONNECTED){
+    set_light(orange);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
+    set_light(off);
+  }
+
+
+  /*AERATE*/
+
+  fan_on();
+  set_light(cyan);
+  delay(fan_on_time);
+  fan_off();
+  set_light(off);
+  delay(normalization_time);
+
+
+  /*SENSE*/
+  set_light(green);
+  sensors_event_t event;
+  dht.temperature().getEvent(&event);
+
+  temperature = event.temperature;
+
+  dht.humidity().getEvent(&event);
+  humidity = event.relative_humidity;
+
+  if(ccs.available()){
+    CCTEMP = ccs.calculateTemperature();
+    if(!ccs.readData()){
+      CO2 = ccs.geteCO2();
+      TVOC = ccs.getTVOC();
+    }
+    else{
+      Serial.println("ERROR!");
+      set_light(red);
+      while(1);
+    }
+  }
+
+  set_light(off);
+
+  Serial.print("temperature:\t");
+  Serial.print(temperature);
+  Serial.println("C");
+
+  Serial.print("Humidity:\t");
+  Serial.println(humidity);
+
+  Serial.print("TVOC:\t\t");
+  Serial.println(TVOC);
+
+  Serial.print("CO2:\t\t");
+  Serial.println(CO2);
+
+  Serial.print("CCtemp:\t\t");
+  Serial.println(CCTEMP);
+  Serial.println(".-.-.-.-.-.-.");
+
+
+  /*TRANSMIT*/
+  set_light(blue);
+
+  MQTT_connect();
+
+  Serial.print(F("\nSending temperature val "));
+  Serial.print(temperature);
+  Serial.print("...");
+  if (! MQTT_temperature.publish(temperature)) {
+    Serial.println(F("Failed"));
+  } else {
+    Serial.println(F("OK!"));
+  }
+
+  Serial.print(F("\nSending humidity val "));
+  Serial.print(humidity);
+  Serial.print("...");
+  if (! MQTT_humidity.publish(humidity)) {
+    Serial.println(F("Failed"));
+  } else {
+    Serial.println(F("OK!"));
+  }
+
+
+  Serial.print(F("\nSending CO2 val "));
+  Serial.print(CO2);
+  Serial.print("...");
+  if (! MQTT_CO2.publish(CO2)) {
+    Serial.println(F("Failed"));
+  } else {
+    Serial.println(F("OK!"));
+  }
+
+  Serial.print(F("\nSending TVOC val "));
+  Serial.print(TVOC);
+  Serial.print("...");
+  if (! MQTT_TVOC.publish(TVOC)) {
+    Serial.println(F("Failed"));
+  } else {
+    Serial.println(F("OK!"));
+  }
+
+  set_light(off);
+
+  Serial.println(".-.-.-.-.-.-.");
+
+
+
+  delay( sleep_time );
+
+
+}
+
+
+
+void MQTT_connect() {
+  int8_t ret;
+
+  // Stop if already connected.
+  if (mqtt.connected()) {
+    return;
+  }
+
+  Serial.print("Connecting to MQTT... ");
+
+  uint8_t retries = 3;
+  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+       Serial.println(mqtt.connectErrorString(ret));
+       Serial.println("Retrying MQTT connection in 5 seconds...");
+       mqtt.disconnect();
+       delay(5000);  // wait 5 seconds
+       retries--;
+       if (retries == 0) {
+         // basically die and wait for WDT to reset me
+         while (1);
+       }
+  }
+  Serial.println("MQTT Connected!");
+}
+
+void fan_on(){
+  digitalWrite(FAN_PIN, LOW);
+}
+
+void fan_off(){
+  digitalWrite(FAN_PIN, HIGH);
+}
+
+void set_light(RGB value){
+  digitalWrite(p_red, 255-value.red);
+  digitalWrite(p_green, 255-value.green);
+  digitalWrite(p_blue, 255-value.blue);
+}
