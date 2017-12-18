@@ -194,7 +194,7 @@ void loop(){
 }
 
 
-
+// Tony DiCola's mqtt esp8266 example. https://github.com/adafruit/Adafruit_MQTT_Library/blob/master/examples/adafruitio_secure_esp8266/adafruitio_secure_esp8266.ino
 void MQTT_connect() {
   int8_t ret;
 
